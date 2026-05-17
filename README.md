@@ -15,7 +15,7 @@ Webcam → MediaPipe Hands → Gesture Router → CNN-1D (static) / Bi-LSTM+Atte
 - **Dynamic signs**: Từ/cụm từ thông dụng → Bi-LSTM + Multi-Head Attention
 - **Gesture Router**: Tự động phân loại static/dynamic
 - **Sentence builder**: Ghép ký hiệu thành câu
-- **Data collection**: Thu thập thêm dữ liệu training từ webcam
+- **Jupyter Notebooks**: Training/fine-tuning với log chi tiết
 - **Model stats**: Visualize training history, accuracy, confusion matrix
 
 ## Cơ sở khoa học
@@ -44,56 +44,51 @@ pip install -r requirements.txt
 
 ## Sử dụng
 
-### Chạy app Streamlit
+### 1. Training (Jupyter Notebooks)
+
+Mở Jupyter và chạy lần lượt:
+
+```bash
+jupyter notebook notebooks/
+```
+
+| Notebook | Mô tả |
+|----------|-------|
+| `01_data_preparation.ipynb` | Download & xử lý VOYA_VSL dataset từ HuggingFace |
+| `02_train_static_model.ipynb` | Train CNN-1D cho static signs (chữ cái) |
+| `03_train_dynamic_model.ipynb` | Train Bi-LSTM + Attention cho dynamic signs (từ/cụm từ) |
+
+Mỗi notebook có **cấu hình ở đầu** (số epochs, batch size, số classes,...) và **hiển thị log, biểu đồ, confusion matrix** trực tiếp.
+
+### 2. Deploy (Streamlit App)
 
 ```bash
 streamlit run app.py
-```
-
-### Thu thập dữ liệu
-
-```bash
-# Static signs (chữ cái)
-python training/collect_keypoints.py --label "A" --type static --num_samples 100
-
-# Dynamic signs (từ/cụm từ)
-python training/collect_keypoints.py --label "Xin chào" --type dynamic --num_sequences 30
-```
-
-### Train models
-
-```bash
-# Train static CNN-1D
-python training/train_static.py --data_dir data/processed/static --epochs 100
-
-# Train dynamic Bi-LSTM + Attention
-python training/train_dynamic.py --data_dir data/processed/dynamic --epochs 80
 ```
 
 ## Cấu trúc project
 
 ```
 vsl-recognition/
-├── app.py                        # Streamlit main app
+├── app.py                          # Streamlit main app
+├── notebooks/
+│   ├── 01_data_preparation.ipynb   # Download & xử lý dataset
+│   ├── 02_train_static_model.ipynb # Train CNN-1D
+│   └── 03_train_dynamic_model.ipynb# Train Bi-LSTM + Attention
 ├── pages/
-│   ├── 1_realtime.py             # Nhận diện realtime
-│   ├── 2_collect_data.py         # Thu thập dữ liệu
-│   ├── 3_reference.py            # Bảng chữ cái VSL
-│   └── 4_model_stats.py          # Thống kê model
+│   ├── 1_realtime.py               # Nhận diện realtime
+│   ├── 2_reference.py              # Bảng chữ cái VSL
+│   └── 3_model_stats.py            # Thống kê model
 ├── src/
-│   ├── keypoint_extractor.py     # MediaPipe keypoint extraction
-│   ├── gesture_router.py         # Phân loại static/dynamic
-│   ├── static_classifier.py      # CNN-1D model + inference
-│   ├── dynamic_classifier.py     # Bi-LSTM + Attention model + inference
-│   ├── sentence_builder.py       # Ghép ký hiệu thành câu
-│   ├── preprocessing.py          # Preprocessing utilities
-│   └── utils.py                  # Helper functions
-├── training/
-│   ├── train_static.py           # Train CNN-1D
-│   ├── train_dynamic.py          # Train Bi-LSTM + Attention
-│   └── collect_keypoints.py      # Thu thập keypoints
-├── models/                       # Trained models (git-ignored)
-├── data/                         # Dataset (git-ignored)
+│   ├── keypoint_extractor.py       # MediaPipe keypoint extraction
+│   ├── gesture_router.py           # Phân loại static/dynamic
+│   ├── static_classifier.py        # CNN-1D model + inference
+│   ├── dynamic_classifier.py       # Bi-LSTM + Attention model + inference
+│   ├── sentence_builder.py         # Ghép ký hiệu thành câu
+│   ├── preprocessing.py            # Preprocessing utilities
+│   └── utils.py                    # Helper functions
+├── models/                         # Trained models (git-ignored)
+├── data/                           # Dataset (git-ignored)
 ├── requirements.txt
 └── README.md
 ```
@@ -105,6 +100,7 @@ vsl-recognition/
 - **MediaPipe** (hand landmark extraction)
 - **TensorFlow/Keras** (deep learning)
 - **OpenCV** (video processing)
+- **Jupyter Notebook** (training/fine-tuning)
 
 ## Dataset
 

@@ -80,12 +80,10 @@ if os.path.exists(dynamic_model_path):
 
 if static_model is None and dynamic_model is None:
     st.warning(
-        "Chưa có model nào được train. Vui lòng train model trước:\n"
-        "```\n"
-        "python training/train_static.py --data_dir data/processed/static\n"
-        "python training/train_dynamic.py --data_dir data/processed/dynamic\n"
-        "```\n\n"
-        "Hoặc sử dụng trang **Thu thập dữ liệu** để tạo dataset."
+        "Chưa có model nào được train. Vui lòng chạy notebooks để train model:\n"
+        "1. `notebooks/01_data_preparation.ipynb` — Download dataset\n"
+        "2. `notebooks/02_train_static_model.ipynb` — Train static model\n"
+        "3. `notebooks/03_train_dynamic_model.ipynb` — Train dynamic model"
     )
     st.info("Demo mode: Hiển thị MediaPipe hand tracking (không có nhận diện)")
 

@@ -24,7 +24,6 @@ từ webcam, sử dụng **MediaPipe** + **Deep Learning**.
 | Trang | Mô tả |
 |-------|-------|
 | **Nhận diện Realtime** | Webcam → MediaPipe → CNN-1D/Bi-LSTM → Kết quả |
-| **Thu thập dữ liệu** | Ghi keypoints mới để mở rộng dataset |
 | **Bảng chữ cái VSL** | Tham khảo 25 ký hiệu bảng chữ cái |
 | **Thống kê Model** | Accuracy, Confusion Matrix, Training History |
 
@@ -33,6 +32,13 @@ từ webcam, sử dụng **MediaPipe** + **Deep Learning**.
 ```
 Webcam → MediaPipe Hands → Gesture Router → CNN-1D (static) / Bi-LSTM+Attention (dynamic) → Kết quả
 ```
+
+### Training
+
+Sử dụng Jupyter Notebooks trong thư mục `notebooks/`:
+1. `01_data_preparation.ipynb` — Download & xử lý VOYA_VSL dataset
+2. `02_train_static_model.ipynb` — Train CNN-1D cho static signs
+3. `03_train_dynamic_model.ipynb` — Train Bi-LSTM + Attention cho dynamic signs
 
 ### Cơ sở khoa học
 

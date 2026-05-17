@@ -12,6 +12,7 @@ data/processed/
 *.npz
 .DS_Store
 *.log
+.ipynb_checkpoints/
 venv/
 .venv/
 models/*.h5
