@@ -15,7 +15,7 @@ Webcam → MediaPipe Hands → Gesture Router → CNN-1D (static) / Bi-LSTM+Atte
 - **Dynamic signs**: Từ/cụm từ thông dụng → Bi-LSTM + Multi-Head Attention
 - **Gesture Router**: Tự động phân loại static/dynamic
 - **Sentence builder**: Ghép ký hiệu thành câu
-- **Jupyter Notebooks**: Training/fine-tuning với log chi tiết
+- **Jupyter Notebooks**: Training/fine-tuning — chạy được trên **Google Colab**, **Kaggle**, hoặc **Local**
 - **Model stats**: Visualize training history, accuracy, confusion matrix
 
 ## Cơ sở khoa học
@@ -26,31 +26,48 @@ Webcam → MediaPipe Hands → Gesture Router → CNN-1D (static) / Bi-LSTM+Atte
 | "A Unified Hand-Landmark-Based DL Framework" | ĐH Bình Dương, 2026 | High |
 | "VSL Alphabet Recognition Using DL and MediaPipe" | ĐH Bách Khoa HN, 2025 | >95% |
 
-## Cài đặt
+## Cài đặt (Local)
 
 ```bash
-# Clone repo
 git clone https://github.com/king14052004-crypto/vsl-recognition.git
 cd vsl-recognition
-
-# Tạo virtual environment
 python -m venv venv
 source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate  # Windows
-
-# Cài dependencies
+# venv\Scripts\activate   # Windows
 pip install -r requirements.txt
 ```
 
-## Sử dụng
+## Training
 
-### 1. Training (Jupyter Notebooks)
+### Cách 1: Google Colab (Khuyến nghị - có GPU miễn phí)
 
-Mở Jupyter và chạy lần lượt:
+1. Upload 3 notebooks từ `notebooks/` lên Google Colab (hoặc mở trực tiếp từ GitHub)
+2. Chạy lần lượt:
+   - `01_data_preparation.ipynb` → Download dataset
+   - `02_train_static_model.ipynb` → Train CNN-1D
+   - `03_train_dynamic_model.ipynb` → Train Bi-LSTM + Attention
+3. Notebooks **tự động mount Google Drive** → data & models lưu tại `My Drive/vsl-recognition/`
+4. Sau khi train xong, download thư mục `models/` từ Drive về local để deploy
+
+> **Lưu ý Colab**: Vào **Runtime → Change runtime type → GPU** (T4) để train nhanh hơn.
+
+### Cách 2: Kaggle (có GPU P100 miễn phí)
+
+1. Tạo notebook mới trên Kaggle
+2. Upload hoặc copy nội dung từ notebooks
+3. Bật **GPU** trong Settings → Accelerator
+4. Notebooks tự detect Kaggle và lưu output tại `/kaggle/working/vsl-recognition/`
+5. Sau khi train xong, download models từ Output tab
+
+> **Lưu ý Kaggle**: Session tối đa 12 giờ. Data lưu trong `/kaggle/working/` sẽ mất khi session kết thúc → nên download models ngay sau khi train.
+
+### Cách 3: Local
 
 ```bash
 jupyter notebook notebooks/
 ```
+
+### Notebooks
 
 | Notebook | Mô tả |
 |----------|-------|
@@ -60,7 +77,21 @@ jupyter notebook notebooks/
 
 Mỗi notebook có **cấu hình ở đầu** (số epochs, batch size, số classes,...) và **hiển thị log, biểu đồ, confusion matrix** trực tiếp.
 
-### 2. Deploy (Streamlit App)
+### Sau khi train xong
+
+Copy thư mục `models/` (từ Drive hoặc Kaggle output) vào thư mục `models/` của project local:
+
+```
+models/
+├── static_cnn1d.keras
+├── static_labels.json
+├── static_history.json
+├── dynamic_bilstm_att.keras
+├── dynamic_labels.json
+└── dynamic_history.json
+```
+
+## Deploy (Streamlit App)
 
 ```bash
 streamlit run app.py
