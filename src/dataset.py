@@ -108,7 +108,7 @@ class VideoTransform:
                 video[0], scale=(0.8, 1.0), ratio=(0.9, 1.1)
             )
             # Sample color jitter params once for temporal consistency
-            brightness_factor, contrast_factor, saturation_factor, _ = \
+            _, brightness_factor, contrast_factor, saturation_factor, _ = \
                 ColorJitter.get_params(
                     brightness=(0.9, 1.1),
                     contrast=(0.9, 1.1),
