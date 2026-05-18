@@ -9,6 +9,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 from torchvision.transforms import Compose, Normalize, Resize, CenterCrop, RandomResizedCrop, ColorJitter
+from torchvision.transforms.functional import adjust_brightness, adjust_contrast, adjust_saturation
 
 
 def load_video_decord(video_path: str, num_frames: int = 16) -> np.ndarray:
@@ -106,13 +107,22 @@ class VideoTransform:
             i, j, h, w = RandomResizedCrop.get_params(
                 video[0], scale=(0.8, 1.0), ratio=(0.9, 1.1)
             )
-            color_jitter = ColorJitter(brightness=0.1, contrast=0.1, saturation=0.1)
+            # Sample color jitter params once for temporal consistency
+            brightness_factor, contrast_factor, saturation_factor, _ = \
+                ColorJitter.get_params(
+                    brightness=(0.9, 1.1),
+                    contrast=(0.9, 1.1),
+                    saturation=(0.9, 1.1),
+                    hue=None,
+                )
 
             for t in range(T):
                 frame = video[t]
                 frame = frame[:, i:i+h, j:j+w]
                 frame = Resize((self.image_size, self.image_size), antialias=True)(frame)
-                frame = color_jitter(frame)
+                frame = adjust_brightness(frame, brightness_factor)
+                frame = adjust_contrast(frame, contrast_factor)
+                frame = adjust_saturation(frame, saturation_factor)
                 frame = self.normalize(frame)
                 transformed.append(frame)
         else:
