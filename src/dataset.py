@@ -1,41 +1,38 @@
-"""Video dataset for Multi-VSL sign language recognition."""
+"""Video datasets and transforms for Vietnamese Sign Language recognition."""
 
-import os
+import json
 import random
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from torchvision.transforms import Compose, Normalize, Resize, CenterCrop, RandomResizedCrop, ColorJitter
+from torchvision.transforms import CenterCrop, ColorJitter, Normalize, RandomResizedCrop, Resize
 from torchvision.transforms.functional import adjust_brightness, adjust_contrast, adjust_saturation
 
 
+VIDEO_EXTENSIONS = (".avi", ".mp4", ".mov", ".mkv", ".webm")
+
+
 def load_video_decord(video_path: str, num_frames: int = 16) -> np.ndarray:
-    """Load video and uniformly sample frames using decord.
-    
-    Args:
-        video_path: Path to video file.
-        num_frames: Number of frames to sample.
-        
-    Returns:
-        np.ndarray of shape (num_frames, H, W, 3) in uint8.
-    """
+    """Load a video and uniformly sample frames with decord."""
     from decord import VideoReader, cpu
 
     vr = VideoReader(video_path, ctx=cpu(0))
     total_frames = len(vr)
+    if total_frames <= 0:
+        raise ValueError(f"Could not read video: {video_path}")
 
     if total_frames >= num_frames:
         indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
     else:
-        indices = np.arange(total_frames)
-        pad_indices = np.full(num_frames - total_frames, total_frames - 1, dtype=int)
-        indices = np.concatenate([indices, pad_indices])
+        indices = np.concatenate(
+            [np.arange(total_frames), np.full(num_frames - total_frames, total_frames - 1, dtype=int)]
+        )
 
-    frames = vr.get_batch(indices).asnumpy()
-    return frames
+    return vr.get_batch(indices).asnumpy()
 
 
 def load_video_opencv(video_path: str, num_frames: int = 16) -> np.ndarray:
@@ -48,28 +45,26 @@ def load_video_opencv(video_path: str, num_frames: int = 16) -> np.ndarray:
         ret, frame = cap.read()
         if not ret:
             break
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        frames.append(frame)
+        frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     cap.release()
 
-    if len(frames) == 0:
+    if not frames:
         raise ValueError(f"Could not read video: {video_path}")
 
-    frames = np.array(frames)
+    frames = np.asarray(frames)
     total_frames = len(frames)
-
     if total_frames >= num_frames:
         indices = np.linspace(0, total_frames - 1, num_frames, dtype=int)
     else:
-        indices = np.arange(total_frames)
-        pad_indices = np.full(num_frames - total_frames, total_frames - 1, dtype=int)
-        indices = np.concatenate([indices, pad_indices])
+        indices = np.concatenate(
+            [np.arange(total_frames), np.full(num_frames - total_frames, total_frames - 1, dtype=int)]
+        )
 
     return frames[indices]
 
 
 def load_video(video_path: str, num_frames: int = 16) -> np.ndarray:
-    """Load video with decord, fallback to opencv."""
+    """Load a video with decord, falling back to OpenCV."""
     try:
         return load_video_decord(video_path, num_frames)
     except Exception:
@@ -77,150 +72,129 @@ def load_video(video_path: str, num_frames: int = 16) -> np.ndarray:
 
 
 class VideoTransform:
-    """Video transformation for training/evaluation."""
+    """Apply temporally consistent transforms to a stack of video frames."""
 
     def __init__(self, mode: str = "train", image_size: int = 224):
         self.image_size = image_size
         self.mode = mode
-        self.normalize = Normalize(
-            mean=[0.485, 0.456, 0.406],
-            std=[0.229, 0.224, 0.225]
-        )
+        self.normalize = Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
 
     def __call__(self, frames: np.ndarray) -> torch.Tensor:
-        """Transform video frames.
-        
-        Args:
-            frames: np.ndarray of shape (T, H, W, 3) uint8.
-            
-        Returns:
-            torch.Tensor of shape (T, 3, H, W) normalized.
-        """
+        """Return tensor with shape (T, C, H, W)."""
         video = torch.from_numpy(frames).float() / 255.0
-        video = video.permute(0, 3, 1, 2)  # (T, H, W, 3) -> (T, 3, H, W)
+        video = video.permute(0, 3, 1, 2)
 
-        T = video.shape[0]
         transformed = []
-
         if self.mode == "train":
-            # Random resized crop parameters (same for all frames)
-            i, j, h, w = RandomResizedCrop.get_params(
-                video[0], scale=(0.8, 1.0), ratio=(0.9, 1.1)
+            i, j, h, w = RandomResizedCrop.get_params(video[0], scale=(0.8, 1.0), ratio=(0.9, 1.1))
+            _, brightness, contrast, saturation, _ = ColorJitter.get_params(
+                brightness=(0.9, 1.1),
+                contrast=(0.9, 1.1),
+                saturation=(0.9, 1.1),
+                hue=None,
             )
-            # Sample color jitter params once for temporal consistency
-            _, brightness_factor, contrast_factor, saturation_factor, _ = \
-                ColorJitter.get_params(
-                    brightness=(0.9, 1.1),
-                    contrast=(0.9, 1.1),
-                    saturation=(0.9, 1.1),
-                    hue=None,
-                )
 
-            for t in range(T):
-                frame = video[t]
-                frame = frame[:, i:i+h, j:j+w]
+            for frame in video:
+                frame = frame[:, i : i + h, j : j + w]
                 frame = Resize((self.image_size, self.image_size), antialias=True)(frame)
-                frame = adjust_brightness(frame, brightness_factor)
-                frame = adjust_contrast(frame, contrast_factor)
-                frame = adjust_saturation(frame, saturation_factor)
-                frame = self.normalize(frame)
-                transformed.append(frame)
+                frame = adjust_brightness(frame, brightness)
+                frame = adjust_contrast(frame, contrast)
+                frame = adjust_saturation(frame, saturation)
+                transformed.append(self.normalize(frame))
         else:
-            for t in range(T):
-                frame = video[t]
+            for frame in video:
                 frame = Resize(self.image_size + 32, antialias=True)(frame)
                 frame = CenterCrop(self.image_size)(frame)
-                frame = self.normalize(frame)
-                transformed.append(frame)
+                transformed.append(self.normalize(frame))
 
-        return torch.stack(transformed)  # (T, 3, H, W)
+        return torch.stack(transformed)
 
 
-class MultiVSLDataset(Dataset):
-    """Dataset for Multi-VSL videos."""
+class VSLVideoDataset(Dataset):
+    """Dataset backed by metadata rows: {"path": str, "label": int}."""
 
     def __init__(
         self,
-        video_paths: list,
-        labels: list,
+        video_list: list[dict],
         num_frames: int = 16,
         transform: Optional[VideoTransform] = None,
     ):
-        self.video_paths = video_paths
-        self.labels = labels
+        self.video_list = video_list
         self.num_frames = num_frames
         self.transform = transform or VideoTransform(mode="eval")
 
     def __len__(self):
-        return len(self.video_paths)
+        return len(self.video_list)
 
     def __getitem__(self, idx):
-        video_path = self.video_paths[idx]
-        label = self.labels[idx]
+        item = self.video_list[idx]
+        frames = load_video(item["path"], self.num_frames)
+        return self.transform(frames), int(item["label"])
 
-        frames = load_video(video_path, self.num_frames)
-        video_tensor = self.transform(frames)
 
-        return video_tensor, label
+# Backwards-compatible name used by older notebooks/code.
+MultiVSLDataset = VSLVideoDataset
+
+
+def load_metadata_split(metadata_dir: str | Path) -> tuple[list[dict], list[dict], list[str]]:
+    """Load train/val metadata generated by notebook 01."""
+    metadata_path = Path(metadata_dir)
+    with open(metadata_path / "train.json", encoding="utf-8") as f:
+        train_data = json.load(f)
+    with open(metadata_path / "val.json", encoding="utf-8") as f:
+        val_data = json.load(f)
+    with open(metadata_path / "class_names.json", encoding="utf-8") as f:
+        class_names = json.load(f)
+    return train_data, val_data, class_names
+
+
+def make_sample_weights(video_list: list[dict]) -> list[float]:
+    """Return inverse-frequency weights for class-balanced sampling."""
+    counts = Counter(int(item["label"]) for item in video_list)
+    return [1.0 / counts[int(item["label"])] for item in video_list]
+
+
+def create_datasets_from_metadata(
+    metadata_dir: str | Path,
+    num_frames: int = 16,
+) -> tuple[VSLVideoDataset, VSLVideoDataset, list[str]]:
+    """Create train/val datasets from metadata JSON files."""
+    train_data, val_data, class_names = load_metadata_split(metadata_dir)
+    train_dataset = VSLVideoDataset(train_data, num_frames, transform=VideoTransform(mode="train"))
+    val_dataset = VSLVideoDataset(val_data, num_frames, transform=VideoTransform(mode="eval"))
+    return train_dataset, val_dataset, class_names
 
 
 def create_datasets(
     data_dir: str,
-    num_classes: int = 50,
+    num_classes: int = 100,
     num_frames: int = 16,
     val_ratio: float = 0.2,
     seed: int = 42,
 ):
-    """Create train/val datasets from Multi-VSL directory structure.
-    
-    Expected structure:
-        data_dir/
-            class_001/
-                video1.avi
-                video2.avi
-            class_002/
-                ...
-    
-    Split by signer if possible, otherwise random split.
-    """
+    """Create train/val datasets from class-folder structure."""
     data_path = Path(data_dir)
     classes = sorted([d.name for d in data_path.iterdir() if d.is_dir()])[:num_classes]
-    class_to_idx = {c: i for i, c in enumerate(classes)}
+    class_to_idx = {class_name: idx for idx, class_name in enumerate(classes)}
 
-    all_videos = []
-    all_labels = []
+    all_items = []
+    for class_name in classes:
+        for video_path in sorted((data_path / class_name).iterdir()):
+            if video_path.suffix.lower() in VIDEO_EXTENSIONS:
+                all_items.append({"path": str(video_path), "label": class_to_idx[class_name]})
 
-    for cls_name in classes:
-        cls_dir = data_path / cls_name
-        videos = sorted([
-            str(f) for f in cls_dir.iterdir()
-            if f.suffix.lower() in ('.avi', '.mp4', '.mov', '.mkv')
-        ])
-        for v in videos:
-            all_videos.append(v)
-            all_labels.append(class_to_idx[cls_name])
-
-    # Split train/val
     random.seed(seed)
-    indices = list(range(len(all_videos)))
-    random.shuffle(indices)
+    random.shuffle(all_items)
+    split_idx = int(len(all_items) * (1 - val_ratio))
 
-    split_idx = int(len(indices) * (1 - val_ratio))
-    train_indices = indices[:split_idx]
-    val_indices = indices[split_idx:]
-
-    train_videos = [all_videos[i] for i in train_indices]
-    train_labels = [all_labels[i] for i in train_indices]
-    val_videos = [all_videos[i] for i in val_indices]
-    val_labels = [all_labels[i] for i in val_indices]
-
-    train_dataset = MultiVSLDataset(
-        train_videos, train_labels, num_frames,
-        transform=VideoTransform(mode="train")
+    train_dataset = VSLVideoDataset(
+        all_items[:split_idx],
+        num_frames,
+        transform=VideoTransform(mode="train"),
     )
-    val_dataset = MultiVSLDataset(
-        val_videos, val_labels, num_frames,
-        transform=VideoTransform(mode="eval")
+    val_dataset = VSLVideoDataset(
+        all_items[split_idx:],
+        num_frames,
+        transform=VideoTransform(mode="eval"),
     )
-
     return train_dataset, val_dataset, classes

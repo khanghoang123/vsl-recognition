@@ -1,25 +1,18 @@
-"""VideoMAEv2 model wrapper for sign language recognition."""
+"""Model utilities for Vietnamese Sign Language recognition."""
 
-import torch
 import torch.nn as nn
-from transformers import VideoMAEForVideoClassification, VideoMAEConfig
+from transformers import VideoMAEForVideoClassification
+
+
+DEFAULT_VIDEOMAE_MODEL = "MCG-NJU/videomae-small-finetuned-kinetics"
 
 
 def create_videomae_model(
-    num_classes: int = 50,
-    pretrained: str = "MCG-NJU/videomae-small-finetuned-kinetics",
+    num_classes: int = 100,
+    pretrained: str = DEFAULT_VIDEOMAE_MODEL,
     freeze_backbone: bool = False,
 ) -> nn.Module:
-    """Create VideoMAEv2-Small model for fine-tuning.
-    
-    Args:
-        num_classes: Number of sign language classes.
-        pretrained: HuggingFace model name or path.
-        freeze_backbone: Whether to freeze encoder layers.
-        
-    Returns:
-        VideoMAE model with classification head.
-    """
+    """Create a VideoMAE-Small classifier for fine-tuning."""
     model = VideoMAEForVideoClassification.from_pretrained(
         pretrained,
         num_labels=num_classes,
@@ -34,10 +27,10 @@ def create_videomae_model(
 
 
 def get_model_info(model: nn.Module) -> dict:
-    """Get model parameter count and size info."""
+    """Return parameter-count information for reporting."""
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    model_size_mb = total_params * 4 / (1024 * 1024)  # fp32
+    model_size_mb = total_params * 4 / (1024 * 1024)
 
     return {
         "total_params": total_params,

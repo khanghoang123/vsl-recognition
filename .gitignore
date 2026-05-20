@@ -1,10 +1,13 @@
 # Data & Models (too large for git)
 data/
+checkpoints/
+drive_runtime/
 models/*.pth
 models/*.pt
 models/*.bin
 models/*.safetensors
 models/videomae_vsl_best/
+models/videomae_olympic_best/
 !models/.gitkeep
 
 # Python
