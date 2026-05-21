@@ -1,16 +1,15 @@
-"""Streamlit app for Vietnamese Sign Language recognition.
+﻿"""Streamlit app for Vietnamese Sign Language recognition.
 
 Local deploy expects the trained model to be downloaded from Google Drive to:
     models/videomae_olympic_best/
 """
 
 import json
-import os
 import tempfile
 import threading
 import time
-import unicodedata
 from collections import deque
+from dataclasses import dataclass
 from pathlib import Path
 
 import cv2
@@ -20,15 +19,15 @@ import torch
 from av import VideoFrame
 from PIL import Image, ImageDraw, ImageFont
 from streamlit_webrtc import WebRtcMode, webrtc_streamer
-from torchvision.transforms import CenterCrop, Normalize, Resize
 from transformers import VideoMAEForVideoClassification
+
+from src.inference import normalize_label, prepare_video_tensor, read_video_frames, validate_class_mapping
 
 
 APP_DIR = Path(__file__).resolve().parent
 MODEL_PATH = APP_DIR / "models" / "videomae_olympic_best"
 NUM_FRAMES = 16
 IMAGE_SIZE = 224
-PREDICT_EVERY_SECONDS = 0.5
 UPLOAD_EXTENSIONS = [".mp4", ".avi", ".mov", ".mkv", ".webm"]
 BROWSER_STREAM_WIDTH = 960
 BROWSER_STREAM_HEIGHT = 720
@@ -43,13 +42,34 @@ MIN_SEGMENT_FRAMES = 12
 MAX_SEGMENT_FRAMES = 48
 END_SILENCE_FRAMES = 5
 COOLDOWN_SECONDS = 0.8
-DEBUG_DIR = APP_DIR / "tmp_analysis" / "realtime_debug"
+FIXED_COUNTDOWN_SECONDS = 3.0
+FIXED_DURATION_SECONDS = 1.5
 FONT_CANDIDATES = [
     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     Path("/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf"),
     Path("C:/Windows/Fonts/arial.ttf"),
     Path("C:/Windows/Fonts/tahoma.ttf"),
 ]
+INFERENCE_LOCK = threading.Lock()
+
+
+@dataclass(frozen=True)
+class RuntimeConfig:
+    """Realtime settings controlled from the Streamlit sidebar."""
+
+    mode: str = "fixed"
+    start_motion_threshold: float = START_MOTION_THRESHOLD
+    end_motion_threshold: float = END_MOTION_THRESHOLD
+    confidence_threshold: float = CONFIDENCE_THRESHOLD
+    min_segment_frames: int = MIN_SEGMENT_FRAMES
+    max_segment_frames: int = MAX_SEGMENT_FRAMES
+    end_silence_frames: int = END_SILENCE_FRAMES
+    result_hold_seconds: float = RESULT_HOLD_SECONDS
+    smoothing_window: int = SMOOTHING_WINDOW
+    preroll_frames: int = PREROLL_FRAMES
+    cooldown_seconds: float = COOLDOWN_SECONDS
+    fixed_countdown_seconds: float = FIXED_COUNTDOWN_SECONDS
+    fixed_duration_seconds: float = FIXED_DURATION_SECONDS
 
 
 st.set_page_config(
@@ -60,14 +80,14 @@ st.set_page_config(
 
 @st.cache_resource
 def load_model():
-    """Load the locally downloaded fine-tuned VideoMAE model."""
+    """Tải mô hình VideoMAE đã fine-tune từ máy local."""
     if not MODEL_PATH.exists():
-        return None, None, None
+        return None, None, None, None
 
     class_names_path = MODEL_PATH / "class_names.json"
     if not class_names_path.exists():
-        st.error(f"Missing class_names.json in {MODEL_PATH}")
-        return None, None, None
+        st.error(f"Thiếu `class_names.json` trong `{MODEL_PATH}`")
+        return None, None, None, None
 
     with open(class_names_path, encoding="utf-8") as f:
         class_names = [normalize_label(name) for name in json.load(f)]
@@ -82,12 +102,8 @@ def load_model():
         model.half()
     model.eval()
 
-    return model, class_names, device
-
-
-def normalize_label(label: str) -> str:
-    """Normalize decomposed Vietnamese labels for consistent display."""
-    return unicodedata.normalize("NFC", label)
+    mapping_validation = validate_class_mapping(model, class_names)
+    return model, class_names, device, mapping_validation
 
 
 @st.cache_resource
@@ -111,88 +127,6 @@ def draw_text_overlay(frame: np.ndarray, lines: list[tuple[str, tuple[int, int, 
     return cv2.cvtColor(np.asarray(image), cv2.COLOR_RGB2BGR)
 
 
-def preprocess_frames(frames: list[np.ndarray]):
-    """Convert BGR frames to VideoMAE tensor shape (1, T, C, H, W)."""
-    total = len(frames)
-    if total == 0:
-        raise ValueError("No frames available for inference.")
-
-    if total >= NUM_FRAMES:
-        indices = np.linspace(0, total - 1, NUM_FRAMES, dtype=int)
-    else:
-        indices = np.concatenate([np.arange(total), np.full(NUM_FRAMES - total, total - 1, dtype=int)])
-
-    normalize = Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    transformed = []
-    for idx in indices:
-        frame_rgb = cv2.cvtColor(center_square_crop(frames[idx]), cv2.COLOR_BGR2RGB)
-        tensor = torch.from_numpy(frame_rgb).float() / 255.0
-        tensor = tensor.permute(2, 0, 1)
-        tensor = Resize(IMAGE_SIZE + 32, antialias=True)(tensor)
-        tensor = CenterCrop(IMAGE_SIZE)(tensor)
-        transformed.append(normalize(tensor))
-
-    return torch.stack(transformed).unsqueeze(0)
-
-
-def read_video_frames(video_path: str | Path, max_frames: int | None = None) -> tuple[list[np.ndarray], dict]:
-    """Read frames from a video file using OpenCV."""
-    cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise RuntimeError(f"Cannot open video: {video_path}")
-
-    fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
-    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
-
-    frames: list[np.ndarray] = []
-    while True:
-        ok, frame = cap.read()
-        if not ok:
-            break
-        frames.append(frame)
-        if max_frames is not None and len(frames) >= max_frames:
-            break
-
-    cap.release()
-
-    return frames, {
-        "fps": fps,
-        "frame_count": frame_count if frame_count > 0 else len(frames),
-        "width": width,
-        "height": height,
-        "duration_seconds": (frame_count / fps) if fps > 0 and frame_count > 0 else None,
-    }
-
-
-def center_square_crop(frame: np.ndarray) -> np.ndarray:
-    """Remove black borders first, then crop to a square around the active content."""
-    height, width = frame.shape[:2]
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-    col_energy = gray.mean(axis=0)
-    row_energy = gray.mean(axis=1)
-    active_cols = np.where(col_energy > 8)[0]
-    active_rows = np.where(row_energy > 8)[0]
-
-    if active_cols.size > 0 and active_rows.size > 0:
-        left = int(active_cols[0])
-        right = int(active_cols[-1]) + 1
-        top = int(active_rows[0])
-        bottom = int(active_rows[-1]) + 1
-        frame = frame[top:bottom, left:right]
-        height, width = frame.shape[:2]
-
-    if height == 0 or width == 0:
-        return frame
-
-    size = min(height, width)
-    top = max((height - size) // 2, 0)
-    left = max((width - size) // 2, 0)
-    return frame[top : top + size, left : left + size]
-
-
 @torch.no_grad()
 def predict(model, video_tensor, class_names, device):
     """Run one VideoMAE prediction."""
@@ -212,44 +146,32 @@ def predict(model, video_tensor, class_names, device):
 
 
 def predict_from_frames(model, class_names, device, frames: list[np.ndarray]):
-    """Run prediction from a BGR frame list and return result + latency."""
+    """Run prediction from a BGR frame list and return result, latency, and prepared frames."""
     start = time.time()
-    video_tensor = preprocess_frames(frames)
-    result = predict(model, video_tensor, class_names, device)
+    prepared = prepare_video_tensor(frames, num_frames=NUM_FRAMES, image_size=IMAGE_SIZE)
+    with INFERENCE_LOCK:
+        result = predict(model, prepared.tensor, class_names, device)
     latency_ms = (time.time() - start) * 1000
-    return result, latency_ms
+    return result, latency_ms, prepared
 
 
-def save_debug_segment(frames: list[np.ndarray], fps: int = 12) -> Path | None:
-    """Persist the latest detected segment for offline inspection."""
-    if not frames:
-        return None
-
-    DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-    output_path = DEBUG_DIR / f"segment_{int(time.time() * 1000)}.mp4"
-    height, width = frames[0].shape[:2]
-    writer = cv2.VideoWriter(
-        str(output_path),
-        cv2.VideoWriter_fourcc(*"mp4v"),
-        fps,
-        (width, height),
-    )
-    if not writer.isOpened():
-        return None
-
-    for frame in frames:
-        writer.write(frame)
-    writer.release()
-    return output_path
+def render_prediction(result: dict, latency_ms: float | None = None):
+    """Render a single prediction result consistently across upload and webcam."""
+    st.markdown(f"### Dự đoán: **{result['label']}** ({result['confidence']:.1%})")
+    if latency_ms is not None:
+        st.caption(f"Thời gian suy luận: {latency_ms:.0f} ms")
+    st.caption(" | ".join(f"{name}: {prob:.1%}" for name, prob in result["top5"]))
 
 
 class BrowserVideoProcessor:
-    """WebRTC processor with gesture spotting before classification."""
+    """WebRTC processor for fixed-duration capture and optional motion spotting."""
 
     def __init__(self):
-        self.raw_buffer = deque(maxlen=max(NUM_FRAMES, PREROLL_FRAMES))
+        self.config = RuntimeConfig()
+        self.raw_buffer = deque(maxlen=240)
         self.last_result = None
         self.last_latency_ms = None
+        self.last_prepared = None
         self.last_result_timestamp = 0.0
         self.last_motion_score = 0.0
         self.recent_results = deque(maxlen=SMOOTHING_WINDOW)
@@ -259,8 +181,40 @@ class BrowserVideoProcessor:
         self.segment_frames: list[np.ndarray] = []
         self.quiet_frames = 0
         self.cooldown_until = 0.0
-        self.last_debug_path = None
+        self.fixed_status = "idle"
+        self.fixed_token = 0
+        self.fixed_start_at = 0.0
+        self.fixed_end_at = 0.0
+        self.fixed_frames: list[np.ndarray] = []
+        self.fixed_result = None
+        self.fixed_latency_ms = None
+        self.fixed_prepared = None
+        self.fixed_error = None
+        self.is_fixed_inferencing = False
         self.lock = threading.Lock()
+
+    def update_config(self, config: RuntimeConfig):
+        with self.lock:
+            old_smoothing = self.config.smoothing_window
+            self.config = config
+            if old_smoothing != config.smoothing_window:
+                recent = list(self.recent_results)[-config.smoothing_window :]
+                self.recent_results = deque(recent, maxlen=config.smoothing_window)
+
+    def request_fixed_capture(self, duration_seconds: float, countdown_seconds: float) -> int:
+        """Start a countdown, then record one isolated gesture segment."""
+        now = time.time()
+        with self.lock:
+            self.fixed_token += 1
+            self.fixed_status = "countdown"
+            self.fixed_start_at = now + countdown_seconds
+            self.fixed_end_at = self.fixed_start_at + duration_seconds
+            self.fixed_frames = []
+            self.fixed_result = None
+            self.fixed_latency_ms = None
+            self.fixed_prepared = None
+            self.fixed_error = None
+            return self.fixed_token
 
     def _estimate_motion(self, image: np.ndarray) -> float:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -290,24 +244,52 @@ class BrowserVideoProcessor:
             "top5": top5_lookup[label],
         }
 
-    def _run_inference(self, frames: list[np.ndarray], timestamp: float):
+    def _run_auto_inference(self, frames: list[np.ndarray], timestamp: float):
         try:
-            result, latency_ms = predict_from_frames(model, class_names, device, frames)
+            result, latency_ms, prepared = predict_from_frames(model, class_names, device, frames)
             with self.lock:
-                if result["confidence"] >= CONFIDENCE_THRESHOLD:
+                config = self.config
+                if result["confidence"] >= config.confidence_threshold:
                     self.recent_results.append(result)
-                    self.last_result = result if len(self.recent_results) < SMOOTHING_WINDOW else self._aggregate_recent_result()
+                    self.last_result = (
+                        result if len(self.recent_results) < config.smoothing_window else self._aggregate_recent_result()
+                    )
                     self.last_latency_ms = latency_ms
+                    self.last_prepared = prepared
                     self.last_result_timestamp = timestamp
                 self.state = "cooldown"
-                self.cooldown_until = timestamp + COOLDOWN_SECONDS
+                self.cooldown_until = timestamp + config.cooldown_seconds
         except Exception:
             with self.lock:
                 self.state = "cooldown"
-                self.cooldown_until = timestamp + COOLDOWN_SECONDS
+                self.cooldown_until = timestamp + self.config.cooldown_seconds
         finally:
             with self.lock:
                 self.is_inferencing = False
+
+    def _run_fixed_inference(self, frames: list[np.ndarray], token: int):
+        try:
+            result, latency_ms, prepared = predict_from_frames(model, class_names, device, frames)
+            with self.lock:
+                if token != self.fixed_token:
+                    return
+                self.fixed_result = result
+                self.fixed_latency_ms = latency_ms
+                self.fixed_prepared = prepared
+                self.fixed_status = "done"
+                self.fixed_error = None
+                self.last_result = result
+                self.last_latency_ms = latency_ms
+                self.last_prepared = prepared
+                self.last_result_timestamp = time.time()
+        except Exception as exc:
+            with self.lock:
+                if token == self.fixed_token:
+                    self.fixed_status = "error"
+                    self.fixed_error = str(exc)
+        finally:
+            with self.lock:
+                self.is_fixed_inferencing = False
 
     def recv(self, frame: VideoFrame) -> VideoFrame:
         image = frame.to_ndarray(format="bgr24")
@@ -315,40 +297,70 @@ class BrowserVideoProcessor:
         motion_score = self._estimate_motion(image)
         now = time.time()
 
-        frames_for_inference = None
+        auto_frames_for_inference = None
+        fixed_frames_for_inference = None
+        fixed_token = None
         with self.lock:
+            config = self.config
             self.last_motion_score = motion_score
+
+            if self.fixed_status == "countdown" and now >= self.fixed_start_at:
+                self.fixed_status = "recording"
+                self.fixed_frames = []
+
+            if self.fixed_status == "recording":
+                self.fixed_frames.append(image)
+                if now >= self.fixed_end_at and not self.is_fixed_inferencing:
+                    fixed_frames_for_inference = self.fixed_frames[:] or list(self.raw_buffer)[-NUM_FRAMES:]
+                    fixed_token = self.fixed_token
+                    self.fixed_status = "predicting"
+                    self.is_fixed_inferencing = True
+
             if self.state == "cooldown" and now >= self.cooldown_until:
                 self.state = "idle"
 
-            if self.state == "idle" and motion_score >= START_MOTION_THRESHOLD:
-                self.state = "collecting"
-                self.segment_frames = list(self.raw_buffer)[-PREROLL_FRAMES:]
+            if config.mode == "auto":
+                if self.state == "idle" and motion_score >= config.start_motion_threshold:
+                    self.state = "collecting"
+                    self.segment_frames = list(self.raw_buffer)[-config.preroll_frames :]
+                    self.quiet_frames = 0
+
+                elif self.state == "collecting":
+                    self.segment_frames.append(image)
+                    if motion_score < config.end_motion_threshold:
+                        self.quiet_frames += 1
+                    else:
+                        self.quiet_frames = 0
+
+                    segment_finished = (
+                        len(self.segment_frames) >= config.max_segment_frames
+                        or (
+                            len(self.segment_frames) >= config.min_segment_frames
+                            and self.quiet_frames >= config.end_silence_frames
+                        )
+                    )
+                    if segment_finished and not self.is_inferencing:
+                        self.is_inferencing = True
+                        self.state = "predicting"
+                        auto_frames_for_inference = self.segment_frames[:]
+                        self.segment_frames = []
+                        self.quiet_frames = 0
+            elif self.state != "idle":
+                self.state = "idle"
+                self.segment_frames = []
                 self.quiet_frames = 0
 
-            elif self.state == "collecting":
-                self.segment_frames.append(image)
-                if motion_score < END_MOTION_THRESHOLD:
-                    self.quiet_frames += 1
-                else:
-                    self.quiet_frames = 0
-
-                segment_finished = (
-                    len(self.segment_frames) >= MAX_SEGMENT_FRAMES
-                    or (len(self.segment_frames) >= MIN_SEGMENT_FRAMES and self.quiet_frames >= END_SILENCE_FRAMES)
-                )
-                if segment_finished and not self.is_inferencing:
-                    self.is_inferencing = True
-                    self.state = "predicting"
-                    frames_for_inference = self.segment_frames[:]
-                    self.segment_frames = []
-                    self.quiet_frames = 0
-
-        if frames_for_inference is not None:
-            self.last_debug_path = save_debug_segment(frames_for_inference)
+        if fixed_frames_for_inference is not None and fixed_token is not None:
             threading.Thread(
-                target=self._run_inference,
-                args=(frames_for_inference, now),
+                target=self._run_fixed_inference,
+                args=(fixed_frames_for_inference, fixed_token),
+                daemon=True,
+            ).start()
+
+        if auto_frames_for_inference is not None:
+            threading.Thread(
+                target=self._run_auto_inference,
+                args=(auto_frames_for_inference, now),
                 daemon=True,
             ).start()
 
@@ -357,15 +369,52 @@ class BrowserVideoProcessor:
             result = self.last_result
             latency_ms = self.last_latency_ms
             motion_snapshot = self.last_motion_score
+            config = self.config
             should_show_result = (
-                result is not None and (now - self.last_result_timestamp) <= RESULT_HOLD_SECONDS
+                result is not None and (now - self.last_result_timestamp) <= config.result_hold_seconds
             )
             state_snapshot = self.state
             segment_len = len(self.segment_frames)
+            fixed_status = self.fixed_status
+            fixed_countdown_left = max(self.fixed_start_at - now, 0.0)
+            fixed_recording_left = max(self.fixed_end_at - now, 0.0)
 
         cv2.rectangle(annotated, (8, 8), (min(annotated.shape[1] - 8, 420), 92), (0, 0, 0), -1)
 
-        if should_show_result:
+        if fixed_status == "countdown":
+            cv2.putText(
+                annotated,
+                f"Get ready: {fixed_countdown_left:.1f}s",
+                (16, 38),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.9,
+                (0, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+        elif fixed_status == "recording":
+            cv2.putText(
+                annotated,
+                f"Recording: {fixed_recording_left:.1f}s",
+                (16, 38),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.9,
+                (0, 180, 255),
+                2,
+                cv2.LINE_AA,
+            )
+        elif fixed_status == "predicting":
+            cv2.putText(
+                annotated,
+                "Predicting...",
+                (16, 38),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.9,
+                (255, 255, 255),
+                2,
+                cv2.LINE_AA,
+            )
+        elif should_show_result:
             label_text = f"{result['label']} ({result['confidence']:.1%})"
             latency_text = f"{latency_ms:.0f} ms" if latency_ms is not None else ""
             annotated = draw_text_overlay(
@@ -402,16 +451,30 @@ class BrowserVideoProcessor:
 
     def get_snapshot(self):
         with self.lock:
-            return self.last_result, self.last_latency_ms
+            return {
+                "last_result": self.last_result,
+                "last_latency_ms": self.last_latency_ms,
+                "last_prepared": self.last_prepared,
+                "last_motion_score": self.last_motion_score,
+                "state": self.state,
+                "segment_len": len(self.segment_frames),
+                "fixed_status": self.fixed_status,
+                "fixed_token": self.fixed_token,
+                "fixed_result": self.fixed_result,
+                "fixed_latency_ms": self.fixed_latency_ms,
+                "fixed_prepared": self.fixed_prepared,
+                "fixed_error": self.fixed_error,
+                "fixed_recorded_frames": len(self.fixed_frames),
+            }
 
 
-st.title("Vietnamese Sign Language Recognition")
-st.caption("VideoMAE-Small fine-tuned on Olympic AI2025. Local app only loads ./models/videomae_olympic_best.")
+st.title("Nhận diện ngôn ngữ ký hiệu tiếng Việt")
+st.caption("VideoMAE-Small fine-tuned trên Olympic AI2025. Ứng dụng local chỉ tải `./models/videomae_olympic_best`.")
 
-model, class_names, device = load_model()
+model, class_names, device, mapping_validation = load_model()
 
 if model is None:
-    st.error("Model folder not found or incomplete.")
+    st.error("Không tìm thấy thư mục mô hình hoặc thư mục chưa đầy đủ.")
     st.markdown(
         f"""
         Train in Colab first, then download this Google Drive folder to local:
@@ -431,38 +494,90 @@ if model is None:
     )
     st.stop()
 
-st.success(f"Loaded {len(class_names)} classes on {device}")
+if not mapping_validation.ok:
+    st.error("Mapping giữa class_names và model bị lệch. Dừng trước khi dự đoán để tránh hiện sai nhãn.")
+    for error in mapping_validation.errors:
+        st.write(f"- {error}")
+    st.stop()
+
+with st.sidebar:
+    st.header("Thiết lập realtime")
+    capture_mode = st.radio(
+        "Chế độ webcam",
+        ["Đếm ngược + fixed duration", "Tự bắt theo chuyển động"],
+        index=0,
+    )
+    fixed_duration_seconds = st.select_slider(
+        "Thời lượng ghi cố định",
+        options=[1.0, 1.5, 2.0],
+        value=FIXED_DURATION_SECONDS,
+        help="Record one isolated sign for this many seconds after the countdown.",
+    )
+    fixed_countdown_seconds = st.slider("Đếm ngược", 1.0, 5.0, FIXED_COUNTDOWN_SECONDS, 0.5)
+
+    st.divider()
+    st.caption("Ngưỡng tự bắt theo chuyển động")
+    start_motion_threshold = st.slider("Ngưỡng bắt đầu chuyển động", 0.5, 12.0, START_MOTION_THRESHOLD, 0.1)
+    end_motion_threshold = st.slider("Ngưỡng kết thúc chuyển động", 0.2, 8.0, END_MOTION_THRESHOLD, 0.1)
+    confidence_threshold = st.slider("Ngưỡng tin cậy", 0.0, 0.95, CONFIDENCE_THRESHOLD, 0.01)
+    min_segment_frames = st.slider("Số frame tối thiểu của đoạn", 4, 64, MIN_SEGMENT_FRAMES, 1)
+    max_segment_frames = st.slider(
+        "Số frame tối đa của đoạn",
+        min_segment_frames,
+        96,
+        max(MAX_SEGMENT_FRAMES, min_segment_frames),
+        1,
+    )
+    end_silence_frames = st.slider("Số frame yên lặng để kết thúc", 1, 20, END_SILENCE_FRAMES, 1)
+    result_hold_seconds = st.slider("Thời gian giữ kết quả", 0.5, 8.0, RESULT_HOLD_SECONDS, 0.5)
+
+runtime_config = RuntimeConfig(
+    mode="fixed" if capture_mode == "Đếm ngược + fixed duration" else "auto",
+    start_motion_threshold=start_motion_threshold,
+    end_motion_threshold=end_motion_threshold,
+    confidence_threshold=confidence_threshold,
+    min_segment_frames=min_segment_frames,
+    max_segment_frames=max_segment_frames,
+    end_silence_frames=end_silence_frames,
+    result_hold_seconds=result_hold_seconds,
+    fixed_countdown_seconds=fixed_countdown_seconds,
+    fixed_duration_seconds=fixed_duration_seconds,
+)
+
+st.success(f"Đã tải {len(class_names)} lớp trên thiết bị {device}")
 
 info_col, classes_col = st.columns([1, 1])
 
 with info_col:
-    st.subheader("Model")
+    st.subheader("Mô hình")
     st.table(
         {
-            "Field": ["Model", "Input", "Classes", "Device", "Local path"],
-            "Value": [
+            "Trường": ["Mô hình", "Đầu vào", "Số lớp", "Thiết bị", "Mapping", "Đường dẫn"],
+            "Giá trị": [
                 "VideoMAE-Small",
                 f"{NUM_FRAMES} frames x {IMAGE_SIZE}x{IMAGE_SIZE}",
                 str(len(class_names)),
                 device,
+                "Hợp lệ",
                 str(MODEL_PATH),
             ],
         }
     )
+    st.caption("Kiểm tra mapping: " + " | ".join(mapping_validation.details))
 
 with classes_col:
-    st.subheader("Classes")
-    st.dataframe({"Index": range(len(class_names)), "Class": class_names}, height=260, width="stretch")
+    st.subheader("Các lớp")
+    st.dataframe({"Index": range(len(class_names)), "Lớp": class_names}, height=260, width="stretch")
 
-tab_browser, tab_upload = st.tabs(["Browser webcam (WSL-friendly)", "Upload video"])
+tab_browser, tab_upload = st.tabs(["Webcam trình duyệt", "Tải video lên"])
 
 with tab_browser:
     st.markdown(
         """
-        This mode is recommended when Streamlit runs inside WSL. The browser asks Windows for webcam access,
-        then streams frames into the app for prediction.
+        Chế độ này hợp khi chạy Streamlit trong WSL. Trình duyệt sẽ xin quyền webcam từ Windows rồi truyền khung hình vào app để dự đoán.
         """
     )
+    st.caption(f"Chế độ hiện tại: {capture_mode}")
 
     browser_ctx = webrtc_streamer(
         key="browser-webcam",
@@ -479,21 +594,80 @@ with tab_browser:
         async_processing=True,
     )
 
+    processor = getattr(browser_ctx, "video_processor", None)
+    if processor is not None:
+        processor.update_config(runtime_config)
+
     if browser_ctx.state.playing:
-        st.info(
-            "Prediction is drawn directly on top of the webcam stream. The app waits for a gesture segment, then classifies it once, which is closer to the training setup."
-        )
-        if DEBUG_DIR.exists():
-            debug_files = sorted(DEBUG_DIR.glob("segment_*.mp4"), key=os.path.getmtime, reverse=True)
-            if debug_files:
-                st.caption(f"Latest debug segment: {debug_files[0]}")
+        if runtime_config.mode == "fixed":
+            st.info(
+                "Chế độ demo: bấm Chụp, chờ đếm ngược, thực hiện một ký hiệu trọn vẹn rồi xem kết quả dự đoán."
+            )
+            capture_col, refresh_col = st.columns([1, 1])
+            with capture_col:
+                capture_clicked = st.button("Chụp theo thời lượng cố định", type="primary")
+            with refresh_col:
+                refresh_clicked = st.button("Làm mới kết quả gần nhất")
+
+            if processor is None:
+                st.warning("Bộ xử lý webcam vẫn đang khởi tạo. Chờ một chút rồi thử lại.")
+            elif capture_clicked:
+                token = processor.request_fixed_capture(
+                    duration_seconds=runtime_config.fixed_duration_seconds,
+                    countdown_seconds=runtime_config.fixed_countdown_seconds,
+                )
+                status_slot = st.empty()
+                deadline = time.time() + runtime_config.fixed_countdown_seconds + runtime_config.fixed_duration_seconds + 12.0
+                snapshot = processor.get_snapshot()
+                while time.time() < deadline:
+                    snapshot = processor.get_snapshot()
+                    status = snapshot["fixed_status"]
+                    if snapshot["fixed_token"] == token and status == "done":
+                        status_slot.success("Đã chụp xong.")
+                        break
+                    if snapshot["fixed_token"] == token and status == "error":
+                        status_slot.error(snapshot["fixed_error"] or "Chụp thất bại.")
+                        break
+                    status_slot.info(
+                        f"Trạng thái: {status} | số frame đã ghi: {snapshot['fixed_recorded_frames']}"
+                    )
+                    time.sleep(0.2)
+                else:
+                    status_slot.warning("Hết thời gian chụp. Kiểm tra xem webcam còn đang chạy không.")
+
+                if snapshot.get("fixed_result") is not None:
+                    render_prediction(snapshot["fixed_result"], snapshot["fixed_latency_ms"])
+
+            elif refresh_clicked and processor is not None:
+                snapshot = processor.get_snapshot()
+                if snapshot["fixed_result"] is None:
+                    st.info("Chưa có kết quả từ chế độ thời lượng cố định.")
+                else:
+                    render_prediction(snapshot["fixed_result"], snapshot["fixed_latency_ms"])
+        else:
+            st.info(
+                "Chế độ tự động sẽ chờ chuyển động, cắt một đoạn rồi dự đoán một lần. Hãy chỉnh ngưỡng ở thanh bên khi theo dõi trạng thái và mức chuyển động."
+            )
+            if processor is not None:
+                snapshot = processor.get_snapshot()
+                metric_cols = st.columns(3)
+                metric_cols[0].metric("Trạng thái", snapshot["state"])
+                metric_cols[1].metric("Chuyển động", f"{snapshot['last_motion_score']:.2f}")
+                metric_cols[2].metric("Số frame đoạn", str(snapshot["segment_len"]))
+
+                if st.button("Làm mới kết quả gần nhất"):
+                    snapshot = processor.get_snapshot()
+                    if snapshot["last_result"] is None:
+                        st.info("Chưa có dự đoán nào được chấp nhận. Hãy thử giảm ngưỡng confidence hoặc ngưỡng chuyển động.")
+                    else:
+                        render_prediction(snapshot["last_result"], snapshot["last_latency_ms"])
     else:
-        st.info("Click Start to open your browser webcam.")
+        st.info("Bấm Bắt đầu để mở webcam trong trình duyệt.")
 
 with tab_upload:
-    st.markdown("Upload a short gesture video to test inference without any webcam dependency.")
+    st.markdown("Tải một video ngắn lên để kiểm tra suy luận mà không cần webcam.")
     uploaded_file = st.file_uploader(
-        "Choose a video",
+        "Chọn video",
         type=[ext.lstrip(".") for ext in UPLOAD_EXTENSIONS],
         accept_multiple_files=False,
     )
@@ -501,7 +675,7 @@ with tab_upload:
     if uploaded_file is not None:
         file_suffix = Path(uploaded_file.name).suffix.lower()
         if file_suffix not in UPLOAD_EXTENSIONS:
-            st.error(f"Unsupported format: {file_suffix}")
+            st.error(f"Định dạng không hỗ trợ: {file_suffix}")
         else:
             st.video(uploaded_file)
             temp_path = None
@@ -512,17 +686,17 @@ with tab_upload:
 
                 frames, video_info = read_video_frames(temp_path)
                 if not frames:
-                    st.error("Could not decode any frames from the uploaded video.")
+                    st.error("Không giải mã được frame nào từ video đã tải lên.")
                 else:
-                    result, latency_ms = predict_from_frames(model, class_names, device, frames)
+                    result, latency_ms, _prepared = predict_from_frames(model, class_names, device, frames)
                     meta_cols = st.columns(4)
-                    meta_cols[0].metric("Frames", f"{len(frames)}")
-                    meta_cols[1].metric("FPS", f"{video_info['fps']:.2f}" if video_info["fps"] else "Unknown")
-                    meta_cols[2].metric("Resolution", f"{video_info['width']}x{video_info['height']}")
-                    meta_cols[3].metric("Latency", f"{latency_ms:.0f} ms")
+                    meta_cols[0].metric("Số frame", f"{len(frames)}")
+                    meta_cols[1].metric("FPS", f"{video_info['fps']:.2f}" if video_info["fps"] else "Không rõ")
+                    meta_cols[2].metric("Độ phân giải", f"{video_info['width']}x{video_info['height']}")
+                    meta_cols[3].metric("Độ trễ", f"{latency_ms:.0f} ms")
 
-                    st.markdown(f"### Prediction: **{result['label']}** ({result['confidence']:.1%})")
-                    st.caption(" | ".join(f"{name}: {prob:.1%}" for name, prob in result["top5"]))
+                    render_prediction(result, latency_ms)
             finally:
                 if temp_path is not None and temp_path.exists():
                     temp_path.unlink(missing_ok=True)
+

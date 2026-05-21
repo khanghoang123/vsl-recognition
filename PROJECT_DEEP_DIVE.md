@@ -786,10 +786,10 @@ draw.text((16, y), text, fill=color, font=font)
 
 ### 9.3. Preprocess app realtime
 
-Hàm chính:
+Hàm chính hiện nằm ở `src/inference.py` để upload video và webcam dùng cùng một logic:
 
 ```python
-def preprocess_frames(frames: list[np.ndarray]):
+prepared = prepare_video_tensor(frames, num_frames=16, image_size=224)
 ```
 
 Input là list frame BGR từ browser/OpenCV decode.
@@ -825,10 +825,14 @@ Giải thích:
 - `Resize(256) + CenterCrop(224)`: giống eval preprocessing.
 - `normalize`: đưa phân phối pixel về đúng kiểu pretrained model mong đợi.
 
-Cuối cùng:
+Cuối cùng helper trả về:
 
 ```python
-return torch.stack(transformed).unsqueeze(0)
+PreparedVideo(
+    tensor=torch.stack(transformed).unsqueeze(0),
+    sampled_frames_rgb=sampled_frames_rgb,
+    indices=indices,
+)
 ```
 
 Shape:
@@ -907,9 +911,9 @@ Nếu motion score lớn, có khả năng người dùng đang làm gesture.
 ### 9.7. Bắt đầu collect segment
 
 ```python
-if self.state == "idle" and motion_score >= START_MOTION_THRESHOLD:
+if self.state == "idle" and motion_score >= config.start_motion_threshold:
     self.state = "collecting"
-    self.segment_frames = list(self.raw_buffer)[-PREROLL_FRAMES:]
+    self.segment_frames = list(self.raw_buffer)[-config.preroll_frames:]
     self.quiet_frames = 0
 ```
 
@@ -940,8 +944,8 @@ Webcam realtime là stream liên tục. Nếu cứ lấy 16 frame gần nhất, 
 ### 9.9. Predict segment
 
 ```python
-result, latency_ms = predict_from_frames(model, class_names, device, frames)
-if result["confidence"] >= CONFIDENCE_THRESHOLD:
+result, latency_ms, prepared = predict_from_frames(model, class_names, device, frames)
+if result["confidence"] >= config.confidence_threshold:
     self.last_result = result
 ```
 
@@ -987,7 +991,23 @@ Nếu cắt segment lệch, model sẽ thấy:
 
 Vì vậy app realtime cần thêm `gesture spotting`, crop, threshold và debug segment. Đây là lớp logic nằm ngoài model classification.
 
-## 11. Cách giải thích dự án khi thuyết trình
+## 11. Cập nhật app realtime/debug
+
+App local hiện tập trung vào demo và debug realtime, không làm batch/confusion-matrix evaluation trong browser nữa vì phần đánh giá đó đã nằm ở notebook.
+
+Các điểm quan trọng mới:
+
+- `src.inference.prepare_video_tensor(...)` là helper dùng chung cho upload video và webcam. Nó trả về cả tensor `(1, 16, 3, 224, 224)` lẫn đúng 16 frame RGB sau crop/resize, trước normalize.
+- App hiển thị `Frame indices` và grid 16 frame để kiểm tra model thật sự nhìn thấy gì.
+- Khi load model, app gọi `validate_class_mapping(...)` để kiểm tra `class_names.json`, `config.id2label`, `config.label2id`, `num_labels` và classifier output. Nếu lệch mapping thì app dừng trước khi predict.
+- Sidebar có `Realtime Settings` để chỉnh threshold của auto spotting: start motion, end motion, confidence, min/max segment frame, số frame yên lặng và thời gian giữ kết quả.
+- Webcam có 2 mode:
+  - `Countdown + fixed duration`: mode mặc định cho demo isolated sign. App đếm ngược, record cố định 1.0/1.5/2.0 giây, sample về 16 frame rồi predict một lần.
+  - `Auto motion spotting`: mode nâng cao, dùng state machine `idle -> collecting -> predicting -> cooldown` và các threshold trong sidebar.
+
+Điểm cần nhớ khi demo: nếu fixed-duration nhận sai, xem grid 16 frame trước. Nếu 16 frame bị mất tay, quá sớm, quá muộn, crop sai hoặc blur thì vấn đề nằm ở capture/preprocess chứ chưa chắc do model.
+
+## 12. Cách giải thích dự án khi thuyết trình
 
 Một cách nói gọn nhưng sâu:
 
@@ -1010,7 +1030,7 @@ Nếu bị hỏi “TensorRT có giúp không?”, trả lời:
 TensorRT giúp latency/FPS nhưng không sửa domain shift hoặc segment cắt sai. Nên trước khi tối ưu TensorRT, cần làm đúng preprocessing, gesture spotting và debug segment.
 ```
 
-## 12. Những file nên đọc khi muốn sửa từng phần
+## 13. Những file nên đọc khi muốn sửa từng phần
 
 Sửa EDA hoặc giải thích dataset:
 
@@ -1041,4 +1061,3 @@ tmp_analysis/realtime_debug/
 tmp_analysis/inspect_realtime_debug.py
 tmp_analysis/predict_realtime_segments.py
 ```
-
