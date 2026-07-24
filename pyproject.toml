@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vsl-recognition"
+version = "1.0.0"
+description = "VideoMAE-based Vietnamese Sign Language recognition with reproducible evaluation."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "MIT" }
+authors = [{ name = "Khang Hoang" }]
+dependencies = [
+  "matplotlib>=3.8,<4",
+  "numpy>=1.26,<3",
+  "opencv-python-headless>=4.9,<5",
+  "pandas>=2,<3",
+  "scikit-learn>=1.4,<2",
+  "safetensors>=0.4,<1",
+  "torch>=2.2,<3",
+  "torchvision>=0.17,<1",
+  "transformers>=4.40,<5",
+]
+
+[project.optional-dependencies]
+app = [
+  "opencv-python>=4.9,<5",
+  "streamlit>=1.36,<2",
+]
+dev = [
+  "pytest>=8,<9",
+  "ruff>=0.7,<1",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

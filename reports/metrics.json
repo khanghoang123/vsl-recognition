@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "split": "held-out validation",
+  "full_validation": {
+    "samples": 812,
+    "top1_accuracy": 0.8719211822660099,
+    "top5_accuracy": 0.9630541871921182,
+    "macro_f1": 0.821374383619518
+  },
+  "audited_clean_subset": {
+    "samples": 808,
+    "top1_accuracy": 0.8762376237623762,
+    "top5_accuracy": 0.9665841584158416,
+    "macro_f1": 0.824458934961916
+  },
+  "excluded_validation_videos": [
+    "284430.mp4",
+    "885339.mp4",
+    "885339_1.mp4",
+    "885339_2.mp4"
+  ],
+  "timing": {
+    "total_evaluation_seconds": 543.4062234999728,
+    "mean_preprocessing_ms": 35.58380234045472,
+    "mean_model_batch_ms": 2527.2531428568186,
+    "batch_size": 4,
+    "model_only_batch1": {
+      "runs": 50,
+      "mean_ms": 625.8172419993207,
+      "median_ms": 628.3117999846581,
+      "p95_ms": 823.1523749913321
+    }
+  },
+  "environment": {
+    "device": "cpu",
+    "fp16": false,
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.12.13",
+    "torch": "2.5.1+cpu",
+    "transformers": "4.46.3",
+    "scikit_learn": "1.5.2"
+  },
+  "model": {
+    "architecture": "videomae",
+    "parameters": 21918436,
+    "checkpoint_bytes": 87695864,
+    "input_frames": 16,
+    "image_size": 224,
+    "classes": 100
+  },
+  "support_groups": {
+    "tail_6_to_15": {
+      "classes": 25,
+      "mean_class_f1": 0.6733333333333333
+    },
+    "body_16_to_58": {
+      "classes": 49,
+      "mean_class_f1": 0.8661460578260158
+    },
+    "head_59_plus": {
+      "classes": 26,
+      "mean_class_f1": 0.8793441613516803
+    }
+  }
+}

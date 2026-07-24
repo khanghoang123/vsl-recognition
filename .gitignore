@@ -1,37 +1,30 @@
-# Data & Models (too large for git)
+# Datasets, checkpoints, and private runtime data
 data/
+metadata/private/
 checkpoints/
 drive_runtime/
-models/*.pth
-models/*.pt
-models/*.bin
-models/*.safetensors
-models/videomae_vsl_best/
-models/videomae_olympic_best/
+models/*
 !models/.gitkeep
+
+# Local demo media
+assets/demo.mp4
+reports/predictions.json
 
 # Python
 __pycache__/
-*.pyc
-*.pyo
-.eggs/
+*.py[cod]
 *.egg-info/
-dist/
-build/
+.pytest_cache/
+.ruff_cache/
 .venv/
 venv/
 
-# Jupyter
+# Notebook and editor state
 .ipynb_checkpoints/
-
-# IDE
-.vscode/
 .idea/
+.vscode/
 
-# OS
+# OS and local configuration
 .DS_Store
 Thumbs.db
-
-# Environment
 .env
-*.log

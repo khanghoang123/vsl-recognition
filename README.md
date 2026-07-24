@@ -1,106 +1,151 @@
-# VSL Recognition
+# Vietnamese Sign Language Recognition
 
-Vietnamese Sign Language recognition with **VideoMAE-Small** fine-tuned on the **Olympic AI2025 preliminary dataset**.
+VideoMAE-based classification of 100 isolated Vietnamese Sign Language (VSL)
+signs, with a reproducible training pipeline, audited validation split, and
+interactive Streamlit inference.
 
-The training workflow is Drive-first: data, metadata, checkpoints, and trained models are stored in Google Drive during Colab training. Local deployment only needs the final trained model folder.
+## Results
 
-For a guided explanation of the whole project, read [PROJECT_WALKTHROUGH.md](PROJECT_WALKTHROUGH.md).
-For a deeper teaching-style explanation of preprocessing, EDA, VideoMAE internals, training flow, and realtime app logic, read [PROJECT_DEEP_DIVE.md](PROJECT_DEEP_DIVE.md).
+| Evaluation set | Videos | Top-1 accuracy | Top-5 accuracy | Macro-F1 |
+|---|---:|---:|---:|---:|
+| Full held-out validation | 812 | **87.19%** | **96.31%** | **82.14%** |
+| Audited subset | 808 | **87.62%** | **96.66%** | **82.45%** |
 
-## Architecture
+The checkpoint was selected at epoch 27 using validation macro-F1. These are
+single-run internal validation results, not an official competition test score.
+Machine-readable metrics and detailed error analysis are available in the
+[evaluation report](reports/RESULTS.md).
 
-```text
-Video/webcam segment -> 16 frames x 224x224 -> VideoMAE-Small -> 100-class prediction
+### Runtime benchmark
+
+On the local Windows CPU with PyTorch 2.5.1, batch-1 model inference averaged
+**626 ms** across 50 runs (median 628 ms, p95 823 ms). Video decoding and
+preprocessing averaged 36 ms per clip. Hardware and package versions are stored
+with the metrics so these numbers are not presented as device-independent.
+
+## Why the audited subset?
+
+The recovered manifests contain no exact filename overlap and no overlap after
+grouping source filename variants. A perceptual-signature audit found two
+cross-split groups:
+
+- the same visual sequence appears under conflicting labels in train and
+  validation;
+- one training clip and three validation clips contain only solid-colour
+  technical frames.
+
+The complete result is retained for reproducibility. The audited subset removes
+the four affected validation files and is reported separately rather than
+silently changing the original split. See [DATASET_CARD.md](DATASET_CARD.md)
+for details.
+
+## System
+
+```mermaid
+flowchart LR
+    A["Short video with one sign"] --> B["Decode and remove technical frames"]
+    B --> C["Uniformly sample 16 frames"]
+    C --> D["Resize, crop, and normalize"]
+    D --> E["Fine-tuned VideoMAE-Small"]
+    E --> F["Top-5 VSL predictions"]
 ```
 
-## Training On Colab
+- **Backbone:** VideoMAE-Small initialized from Kinetics-400 weights
+- **Input:** 16 RGB frames at 224 × 224
+- **Training:** AdamW, cosine schedule, label smoothing, weighted sampling
+- **Primary metric:** macro-F1 due to class imbalance
+- **Demo:** video upload with top-5 probabilities and latency
 
-Use the notebooks in order:
+## Quick start
 
-1. `notebooks/01_download_and_explore.ipynb` downloads and explores the Olympic AI2025 dataset.
-2. `notebooks/02_train_videomae.ipynb` fine-tunes VideoMAE-Small and saves checkpoints/model to Drive.
-3. `notebooks/03_inference_and_deploy.ipynb` benchmarks the trained model and explains local deploy.
-
-Default Google Drive layout:
-
-```text
-/content/drive/MyDrive/vsl-recognition/
-|-- data/
-|   `-- olympic_ai2025/
-|-- metadata/
-|-- checkpoints/
-|   `-- videomae_olympic/
-`-- models/
-    `-- videomae_olympic_best/
-```
-
-## Local Deploy
-
-After training, download this Drive folder:
-
-```text
-/content/drive/MyDrive/vsl-recognition/models/videomae_olympic_best/
-```
-
-Place it locally as:
-
-```text
-vsl-recognition/
-`-- models/
-    `-- videomae_olympic_best/
-```
-
-Then run:
+Python 3.10 or 3.11 is recommended.
 
 ```bash
-pip install -r requirements.txt
+git clone https://github.com/khanghoang123/vsl-recognition.git
+cd vsl-recognition
+python -m venv .venv
+
+# Windows
+.venv\Scripts\activate
+
+# macOS/Linux
+source .venv/bin/activate
+
+pip install -e ".[app]"
+```
+
+Place the local model bundle at:
+
+```text
+models/videomae_olympic_best/
+├── class_names.json
+├── config.json
+├── model.safetensors
+└── preprocessor_config.json
+```
+
+Then launch the app:
+
+```bash
 streamlit run app.py
 ```
 
-The local app does not require the dataset and does not use `/content/drive/...` paths.
+Set `VSL_MODEL_DIR` to use a different model location.
 
-## Project Structure
+## Reproduce the audit and evaluation
 
-```text
-vsl-recognition/
-|-- app.py
-|-- requirements.txt
-|-- PROJECT_PLAN.md
-|-- PROJECT_WALKTHROUGH.md
-|-- PROJECT_DEEP_DIVE.md
-|-- notebooks/
-|   |-- 01_download_and_explore.ipynb
-|   |-- 02_train_videomae.ipynb
-|   `-- 03_inference_and_deploy.ipynb
-|-- src/
-|   |-- dataset.py
-|   |-- models.py
-|   `-- inference.py
-`-- models/
-    `-- videomae_olympic_best/   # downloaded after training, git-ignored
+The raw dataset and checkpoint are intentionally excluded from Git.
+
+```bash
+python -m vsl_recognition.audit \
+  --metadata-dir /path/to/metadata \
+  --data-root /path/to/dataset/train \
+  --model-dir /path/to/model \
+  --output reports/data_audit.json
+
+python -m vsl_recognition.evaluate \
+  --model-dir /path/to/model \
+  --metadata /path/to/metadata/val.json \
+  --data-root /path/to/dataset/train \
+  --audit reports/data_audit.json \
+  --output-dir reports
 ```
 
-## Default Training Config
+Training uses the same importable preprocessing code:
 
-| Setting | Value |
-|---|---|
-| Model | `MCG-NJU/videomae-small-finetuned-kinetics` |
-| Classes | 100 |
-| Input | 16 frames, 224x224 |
-| Optimizer | AdamW |
-| LR | 5e-4 |
-| Weight decay | 0.05 |
-| Scheduler | cosine with warmup |
-| Epochs | 30 |
-| Batch size | 8 |
-| Loss | CrossEntropy + label smoothing 0.1 |
-| Imbalance handling | WeightedRandomSampler |
-| Local inference | batch=1, fp16 on CUDA |
+```bash
+python -m vsl_recognition.train \
+  --config configs/videomae_small.json \
+  --metadata-dir /path/to/metadata \
+  --data-root /path/to/dataset/train \
+  --output-dir models/videomae_olympic_best
+```
 
-The defaults above should be justified from notebook 01 EDA before full training. In particular, notebook 01 prints frame-count distribution, duration/FPS, resolution distribution, class imbalance, unreadable/bad-frame checks, duplicate candidates, and head/body/tail visual samples. These checks are for explanation and inspection only; the EDA notebook does not delete or rewrite the dataset.
+## Repository structure
 
-## References
+```text
+.
+├── app.py                  # Streamlit demo
+├── configs/                # Versioned experiment configuration
+├── docs/                   # Methodology and limitations
+├── reports/                # Audits, metrics, figures, and predictions
+├── src/vsl_recognition/    # Training, evaluation, and inference package
+└── tests/                  # Fast tests that do not need the dataset/model
+```
 
-- Olympic AI2025 preliminary Vietnamese Sign Language dataset and baseline material.
-- VideoMAE: Masked Autoencoders are Data-Efficient Learners for Self-Supervised Video Pre-Training.
-- VideoMAE V2: Scaling Video Masked Autoencoders with Dual Masking.
+## Scope and limitations
+
+This project classifies one isolated sign per clip. It does not perform
+continuous sign spotting or sentence translation. Webcam performance can be
+lower than validation performance because of background, lighting, framing,
+motion blur, and gesture-boundary shift.
+
+Read the [model card](MODEL_CARD.md), [dataset card](DATASET_CARD.md), and
+[limitations](docs/limitations.md) before reusing the system.
+
+## License and attribution
+
+Source code is released under MIT. The upstream VideoMAE checkpoint is
+CC BY-NC 4.0, so fine-tuned model weights are a separate non-commercial
+artifact. The Olympic AI 2025 dataset is not redistributed. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

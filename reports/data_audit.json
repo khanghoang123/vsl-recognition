@@ -1,0 +1,226 @@
+{
+  "schema_version": 1,
+  "dataset": {
+    "train_videos": 3063,
+    "validation_videos": 812,
+    "total_videos": 3875,
+    "classes": 100,
+    "train_classes": 100,
+    "validation_classes": 100,
+    "class_support_total": {
+      "0": 32,
+      "1": 71,
+      "2": 60,
+      "3": 62,
+      "4": 23,
+      "5": 7,
+      "6": 8,
+      "7": 62,
+      "8": 18,
+      "9": 35,
+      "10": 6,
+      "11": 48,
+      "12": 67,
+      "13": 51,
+      "14": 17,
+      "15": 58,
+      "16": 6,
+      "17": 68,
+      "18": 7,
+      "19": 62,
+      "20": 34,
+      "21": 62,
+      "22": 7,
+      "23": 67,
+      "24": 69,
+      "25": 60,
+      "26": 49,
+      "27": 14,
+      "28": 57,
+      "29": 22,
+      "30": 6,
+      "31": 53,
+      "32": 42,
+      "33": 51,
+      "34": 32,
+      "35": 45,
+      "36": 50,
+      "37": 6,
+      "38": 26,
+      "39": 48,
+      "40": 7,
+      "41": 47,
+      "42": 31,
+      "43": 56,
+      "44": 11,
+      "45": 67,
+      "46": 11,
+      "47": 50,
+      "48": 7,
+      "49": 56,
+      "50": 35,
+      "51": 48,
+      "52": 68,
+      "53": 67,
+      "54": 7,
+      "55": 71,
+      "56": 7,
+      "57": 60,
+      "58": 57,
+      "59": 30,
+      "60": 68,
+      "61": 44,
+      "62": 47,
+      "63": 37,
+      "64": 67,
+      "65": 45,
+      "66": 6,
+      "67": 72,
+      "68": 15,
+      "69": 65,
+      "70": 46,
+      "71": 6,
+      "72": 59,
+      "73": 11,
+      "74": 24,
+      "75": 19,
+      "76": 11,
+      "77": 8,
+      "78": 56,
+      "79": 67,
+      "80": 52,
+      "81": 24,
+      "82": 57,
+      "83": 74,
+      "84": 25,
+      "85": 6,
+      "86": 8,
+      "87": 7,
+      "88": 62,
+      "89": 6,
+      "90": 16,
+      "91": 19,
+      "92": 38,
+      "93": 48,
+      "94": 59,
+      "95": 53,
+      "96": 54,
+      "97": 18,
+      "98": 62,
+      "99": 53
+    },
+    "exact_path_overlap": [],
+    "source_group_overlap": [],
+    "missing_videos": []
+  },
+  "artifacts": {
+    "train_manifest": {
+      "file": "train.json",
+      "bytes": 609000,
+      "sha256": "f293c4219b8c70bac876023dfc7ab2ee2566a82e18ddc6fccbbb63999e4caa9f"
+    },
+    "validation_manifest": {
+      "file": "val.json",
+      "bytes": 161327,
+      "sha256": "d5caed3e9af8888506fec569597224a621e12c036e7decce073ee904287f6b2a"
+    },
+    "class_names": {
+      "file": "class_names.json",
+      "bytes": 1562,
+      "sha256": "8fb7569f8eebde4090b0629e56da22d44cf5fea7f3e58c5b2b0b672b2913d978"
+    },
+    "model_config": {
+      "file": "config.json",
+      "bytes": 6804,
+      "sha256": "9038d4e457aba73bd99e123495847d5d4858f9ea3e4254982be0e3b60ce4e2de"
+    },
+    "model_weights": {
+      "file": "model.safetensors",
+      "bytes": 87695864,
+      "sha256": "958b9a6340cd3788cc5789711b344d3ecae24570633e67ff63e094819d338613"
+    },
+    "training_history": {
+      "file": "training_history.json",
+      "bytes": 7704,
+      "sha256": "eeda9555d067f969c4c84b2a4dd8d7de84971891ed221edb31b22e9989648a89"
+    },
+    "legacy_metrics": {
+      "file": "metrics.json",
+      "bytes": 264,
+      "sha256": "4851e304cb3abaa4f5c9aab874cb056c85f3848b8ab09b07289c529b0b67f0fd"
+    }
+  },
+  "duplicate_signature_audit": {
+    "enabled": true,
+    "duplicate_groups": 551,
+    "duplicate_videos": 1653,
+    "cross_split_groups": [
+      [
+        {
+          "split": "train",
+          "video_name": "392683.mp4",
+          "class_name": "Chào",
+          "label": 20,
+          "sampled_bad_frame_ratio": 0.0
+        },
+        {
+          "split": "train",
+          "video_name": "468203.mp4",
+          "class_name": "Chào",
+          "label": 20,
+          "sampled_bad_frame_ratio": 0.0
+        },
+        {
+          "split": "validation",
+          "video_name": "284430.mp4",
+          "class_name": "Chậm lại",
+          "label": 24,
+          "sampled_bad_frame_ratio": 0.0
+        }
+      ],
+      [
+        {
+          "split": "train",
+          "video_name": "214576.mp4",
+          "class_name": "Biết",
+          "label": 12,
+          "sampled_bad_frame_ratio": 1.0
+        },
+        {
+          "split": "validation",
+          "video_name": "885339.mp4",
+          "class_name": "Khai báo",
+          "label": 43,
+          "sampled_bad_frame_ratio": 1.0
+        },
+        {
+          "split": "validation",
+          "video_name": "885339_2.mp4",
+          "class_name": "Khai báo",
+          "label": 43,
+          "sampled_bad_frame_ratio": 1.0
+        },
+        {
+          "split": "validation",
+          "video_name": "885339_1.mp4",
+          "class_name": "Khai báo",
+          "label": 43,
+          "sampled_bad_frame_ratio": 1.0
+        }
+      ]
+    ],
+    "validation_issue_videos": [
+      "284430.mp4",
+      "885339.mp4",
+      "885339_1.mp4",
+      "885339_2.mp4"
+    ]
+  },
+  "checks": {
+    "all_videos_resolved": true,
+    "all_classes_present": true,
+    "no_exact_overlap": true,
+    "no_source_group_overlap": true,
+    "no_signature_overlap": false
+  }
+}
